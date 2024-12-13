@@ -3,6 +3,15 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 import pickle
+import wikipediaapi
+import spacy
+
+# Initialize Wikipedia API and spaCy
+wiki_wiki = wikipediaapi.Wikipedia(
+    language='en',
+    user_agent="lucy virtual assistant (https://mpkcomteck.com; engineer@mpkcomteck.com)"
+)
+nlp = spacy.load("en_core_web_sm")
 
 # Sample relationship problems and their corresponding intents
 training_data = [
@@ -300,24 +309,58 @@ training_data = [
 ]
 
 
+# Preprocess the data using spaCy and Wikipedia
+def preprocess_text(text):
+    # Tokenization, lemmatization, and stop-word removal with spaCy
+    doc = nlp(text)
+    tokens = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
+    processed_text = " ".join(tokens)
 
-# Prepare the dataset
-problems = [item["problem"] for item in training_data]
+    # Augment with related Wikipedia content if available
+    wiki_page = wiki_wiki.page(text)
+    if wiki_page.exists():
+        processed_text += " " + wiki_page.summary[:500]  # Add up to 500 characters from the summary
+
+    return processed_text
+
+
+# Prepare the training data
+problems = [preprocess_text(item["problem"]) for item in training_data]
 intents = [item["intent"] for item in training_data]
 
-# Vectorize the problems using CountVectorizer
+# Vectorize the text data
 vectorizer = CountVectorizer()
+X = vectorizer.fit_transform(problems)
 
-# Split the dataset into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(problems, intents, test_size=0.2, random_state=42)
+# Encode the intents
+intent_to_index = {intent: idx for idx, intent in enumerate(set(intents))}
+y = np.array([intent_to_index[intent] for intent in intents])
 
-# Fit the vectorizer and classifier
-X_train_vec = vectorizer.fit_transform(X_train)
-classifier = LogisticRegression()
-classifier.fit(X_train_vec, y_train)
+# Split the data into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Save the trained model and vectorizer
-with open('chatbot_model.pkl', 'wb') as model_file:
-    pickle.dump((vectorizer, classifier), model_file)
+# Train a logistic regression model
+model = LogisticRegression()
+model.fit(X_train, y_train)
 
-print("Model trained and saved successfully!")
+# Save the model and vectorizer to disk
+with open("relationship_intent_model.pkl", "wb") as model_file:
+    pickle.dump(model, model_file)
+
+with open("relationship_vectorizer.pkl", "wb") as vectorizer_file:
+    pickle.dump(vectorizer, vectorizer_file)
+
+# Function to predict intent
+index_to_intent = {idx: intent for intent, idx in intent_to_index.items()}
+
+
+def predict_intent(problem):
+    processed_problem = preprocess_text(problem)
+    vectorized_problem = vectorizer.transform([processed_problem])
+    prediction = model.predict(vectorized_problem)
+    return index_to_intent[prediction[0]]
+
+
+# Example usage
+example_problem = "How do I rebuild trust with my partner?"
+print("Predicted Intent:", predict_intent(example_problem))
