@@ -12,7 +12,6 @@ wiki_wiki = wikipediaapi.Wikipedia(
     user_agent="lucy virtual assistant (http://mpkcomteck.com; engineer@mpkcomteck.com)"
 )
 
-
 # Load the trained model and vectorizer
 with open("relationship_intent_model.pkl", "rb") as model_file:
     classifier = pickle.load(model_file)
@@ -110,8 +109,6 @@ responses = {
 }
 
 
-
-
 # Preprocessing function
 def preprocess_text(text):
     # Tokenization, lemmatization, and stop-word removal with spaCy
@@ -126,12 +123,10 @@ def preprocess_text(text):
 
     return processed_text
 
-
 # Routes
 @app.route('/')
 def home():
     return "Welcome to the Relationship Chatbot API!"
-
 
 @app.route('/ask', methods=['POST'])
 def ask():
@@ -152,7 +147,6 @@ def ask():
     response = responses.get(intent, "I'm not sure how to help with that, but I'm here for you!")
 
     return jsonify({"response": response})
-
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

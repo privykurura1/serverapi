@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 import pickle
 import wikipediaapi
 import spacy
@@ -308,59 +308,46 @@ training_data = [
   {"problem": "Relationship advice.", "intent": "ask_relationship_advice"}
 ]
 
-
-# Preprocess the data using spaCy and Wikipedia
+# Preprocessing function: Tokenization, Lemmatization, and Wikipedia augmentation
 def preprocess_text(text):
-    # Tokenization, lemmatization, and stop-word removal with spaCy
     doc = nlp(text)
     tokens = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
     processed_text = " ".join(tokens)
 
-    # Augment with related Wikipedia content if available
+    # Augment with Wikipedia content if available
     wiki_page = wiki_wiki.page(text)
     if wiki_page.exists():
         processed_text += " " + wiki_page.summary[:500]  # Add up to 500 characters from the summary
 
     return processed_text
 
+# Prepare the dataset
+texts = [preprocess_text(item["problem"]) for item in training_data]
+labels = [item["intent"] for item in training_data]
 
-# Prepare the training data
-problems = [preprocess_text(item["problem"]) for item in training_data]
-intents = [item["intent"] for item in training_data]
-
-# Vectorize the text data
+# Vectorize the text data using CountVectorizer
 vectorizer = CountVectorizer()
-X = vectorizer.fit_transform(problems)
+X = vectorizer.fit_transform(texts)
 
-# Encode the intents
-intent_to_index = {intent: idx for idx, intent in enumerate(set(intents))}
-y = np.array([intent_to_index[intent] for intent in intents])
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, labels, test_size=0.2, random_state=42)
 
-# Split the data into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Train a logistic regression model
-model = LogisticRegression()
+# Train a Logistic Regression model
+model = LogisticRegression(max_iter=1000)
 model.fit(X_train, y_train)
 
-# Save the model and vectorizer to disk
+# Evaluate the model using cross-validation
+cv_scores = cross_val_score(model, X, labels, cv=5)
+print(f"Cross-validation scores: {cv_scores}")
+print(f"Mean CV score: {np.mean(cv_scores)}")
+
+# Save the trained model and vectorizer to disk
 with open("relationship_intent_model.pkl", "wb") as model_file:
     pickle.dump(model, model_file)
 
 with open("relationship_vectorizer.pkl", "wb") as vectorizer_file:
     pickle.dump(vectorizer, vectorizer_file)
 
-# Function to predict intent
-index_to_intent = {idx: intent for intent, idx in intent_to_index.items()}
-
-
-def predict_intent(problem):
-    processed_problem = preprocess_text(problem)
-    vectorized_problem = vectorizer.transform([processed_problem])
-    prediction = model.predict(vectorized_problem)
-    return index_to_intent[prediction[0]]
-
-
-# Example usage
-example_problem = "How do I rebuild trust with my partner?"
-print("Predicted Intent:", predict_intent(example_problem))
+# Evaluate on the test set
+test_accuracy = model.score(X_test, y_test)
+print(f"Test set accuracy: {test_accuracy}")
