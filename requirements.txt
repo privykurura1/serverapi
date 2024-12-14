@@ -1,4 +1,8 @@
 scikit-learn
 flask
 flask_cors
+spacy[transformers]
+gunicorn
+wikipedia-api
+
 

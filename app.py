@@ -4,20 +4,41 @@ import pickle
 from sklearn.feature_extraction.text import CountVectorizer
 import spacy
 import wikipediaapi
+import os
 
 # Initialize spaCy and Wikipedia API
-nlp = spacy.load("en_core_web_sm")
+SPACY_MODEL = "en_core_web_sm"
+
+# Ensure the spaCy model is available
+try:
+    if not spacy.util.is_package(SPACY_MODEL):
+        spacy.cli.download(SPACY_MODEL)
+    nlp = spacy.load(SPACY_MODEL)
+except Exception as e:
+    raise RuntimeError(f"Error loading spaCy model '{SPACY_MODEL}': {e}")
+
 wiki_wiki = wikipediaapi.Wikipedia(
     language='en',
     user_agent="lucy virtual assistant (http://mpkcomteck.com; engineer@mpkcomteck.com)"
 )
 
 # Load the trained model and vectorizer
-with open("relationship_intent_model.pkl", "rb") as model_file:
-    classifier = pickle.load(model_file)
+MODEL_PATH = "relationship_intent_model.pkl"
+VECTORIZER_PATH = "relationship_vectorizer.pkl"
 
-with open("relationship_vectorizer.pkl", "rb") as vectorizer_file:
-    vectorizer = pickle.load(vectorizer_file)
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(f"Model file '{MODEL_PATH}' is missing.")
+if not os.path.exists(VECTORIZER_PATH):
+    raise FileNotFoundError(f"Vectorizer file '{VECTORIZER_PATH}' is missing.")
+
+try:
+    with open(MODEL_PATH, "rb") as model_file:
+        classifier = pickle.load(model_file)
+
+    with open(VECTORIZER_PATH, "rb") as vectorizer_file:
+        vectorizer = pickle.load(vectorizer_file)
+except Exception as e:
+    raise RuntimeError(f"Error loading model or vectorizer: {e}")
 
 # Flask app setup
 app = Flask(__name__)
@@ -25,6 +46,7 @@ CORS(app)
 
 # Intent-to-response mapping
 responses = {
+    "ask_relationship_advice" : "Relationships are about mutual respect, trust, and communication. It's important to be honest with your partner, express your feelings openly, and listen to each other. Always make time for each other, even when life gets busy. Remember, it's normal to face challenges, but working through them together will strengthen your bond. Don’t forget to support each other’s dreams and goals, and show appreciation for the little things in your relationship. Trust and understanding form the foundation of a healthy partnership.",
     "ask_love_signs": "If she texts you back, she might be interested.",
     "ask_lost_love": "If someone doesn't show interest or affection anymore, they might have moved on.",
     "social_media_ex": "It's important to set boundaries and maintain respect on social media with your ex.",
@@ -111,42 +133,75 @@ responses = {
 
 # Preprocessing function
 def preprocess_text(text):
-    # Tokenization, lemmatization, and stop-word removal with spaCy
-    doc = nlp(text)
-    tokens = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
-    processed_text = " ".join(tokens)
+    """Preprocesses user input using spaCy and Wikipedia API."""
+    try:
+        # Tokenize and lemmatize the input text
+        doc = nlp(text)
+        tokens = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
+        processed_text = " ".join(tokens)
 
-    # Augment with related Wikipedia content if available
-    wiki_page = wiki_wiki.page(text)
-    if wiki_page.exists():
-        processed_text += " " + wiki_page.summary[:500]  # Add up to 500 characters from the summary
+        # Augment input with Wikipedia summary if available
+        wiki_page = wiki_wiki.page(text)
+        if wiki_page.exists():
+            processed_text += " " + wiki_page.summary[:500]  # Add up to 500 characters from the summary
 
-    return processed_text
+        return processed_text
+    except Exception as e:
+        raise ValueError(f"Error during text preprocessing: {e}")
 
-# Routes
+# Function to get response from Wikipedia if intent is not matched
+def get_wikipedia_answer(query):
+    try:
+        wiki_page = wiki_wiki.page(query)
+        if wiki_page.exists():
+            return wiki_page.summary[:500]  # Provide the first 500 characters of the summary
+        else:
+            return "I'm not sure about that, but I'm here to help with relationship questions."
+    except Exception as e:
+        return "I encountered an error while fetching information."
+
+# Flask routes
 @app.route('/')
 def home():
-    return "Welcome to the Relationship Chatbot API!"
+    return "Welcome to the Relationship Chatbot API!", 200, {'Content-Type': 'text/plain'}
 
 @app.route('/ask', methods=['POST'])
 def ask():
+    """Handle user queries and return chatbot responses."""
+    if not request.json or 'sentence' not in request.json:
+        return jsonify({"error": "Invalid input. Please provide a valid 'sentence' in JSON format."}), 400
+
     user_input = request.json.get('sentence')
-
     if not user_input:
-        return jsonify({"error": "No question provided"}), 400
+        return jsonify({"error": "No question provided."}), 400
 
-    # Preprocess and vectorize the input
-    processed_input = preprocess_text(user_input)
-    user_input_vec = vectorizer.transform([processed_input])
+    try:
+        # Handle greeting
+        if any(greeting in user_input.lower() for greeting in ['hi', 'hello', 'hey', 'greetings']):
+            return jsonify({"response": "Hello! How can I assist you today? I’m here to help with relationship-based questions."})
 
-    # Predict the intent
-    predicted_intent_index = classifier.predict(user_input_vec)[0]
+        # Check for specific questions like 'Who are you?' or 'Who developed you?'
+        if "who are you" in user_input.lower():
+            return jsonify({"response": "I am Lucy, your virtual assistant, developed by Priviledge Kurura."})
 
-    # Retrieve the corresponding intent and response
-    intent = list(responses.keys())[predicted_intent_index]
-    response = responses.get(intent, "I'm not sure how to help with that, but I'm here for you!")
+        # Preprocess and vectorize the user input
+        processed_input = preprocess_text(user_input)
+        user_input_vec = vectorizer.transform([processed_input])
 
-    return jsonify({"response": response})
+        # Predict the intent
+        predicted_intent_label = classifier.predict(user_input_vec)[0]  # Directly get the predicted label
+        response = responses.get(predicted_intent_label, None)
+
+        # If no predefined response, fetch information from Wikipedia
+        if not response:
+            response = get_wikipedia_answer(user_input)
+
+        return jsonify({"response": response})
+
+    except ValueError as ve:
+        return jsonify({"error": f"Preprocessing error: {ve}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
